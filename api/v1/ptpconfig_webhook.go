@@ -190,6 +190,16 @@ func (r *PtpConfig) validate() error {
 				}
 			}
 		}
+
+		// Validate plugin names
+		if profile.Plugins != nil {
+			for pluginName := range profile.Plugins {
+				if !IsValidPlugin(pluginName) {
+					return fmt.Errorf("unknown plugin '%s' in profile '%s'. Valid plugins: %v",
+						pluginName, *profile.Name, AvailablePlugins)
+				}
+			}
+		}
 	}
 	return nil
 }

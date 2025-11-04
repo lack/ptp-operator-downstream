@@ -255,7 +255,9 @@ func (r *PtpOperatorConfigReconciler) syncLinuxptpDaemon(ctx context.Context, de
 			pluginList = append(pluginList, k)
 		}
 	} else {
-		pluginList = []string{"e810", "ntpfailover"} // Enable e810 by default if plugins not specified
+		// Default plugins: e810 and ntpfailover
+		// Available plugins are defined in api/v1/plugins.go
+		pluginList = []string{"e810", "ntpfailover"}
 	}
 	sort.Strings(pluginList)
 	enabledPlugins := strings.Join(pluginList, ",")
