@@ -1,3 +1,9 @@
+# Load local .env if present
+ifneq (,$(wildcard ./.env))
+    include ./.env
+    export
+endif
+
 # VERSION defines the project version for the bundle. 
 # Update this value when you upgrade the version of your project.
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
@@ -223,7 +229,7 @@ ifeq (,$(shell which opm 2>/dev/null))
 	set -e ;\
 	mkdir -p $(dir $(OPM)) ;\
 	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
-	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/v1.15.1/$${OS}-$${ARCH}-opm ;\
+	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/v1.60.0/$${OS}-$${ARCH}-opm ;\
 	chmod +x $(OPM) ;\
 	}
 else
@@ -236,23 +242,65 @@ endif
 BUNDLE_IMGS ?= $(BUNDLE_IMG)
 
 # The image tag given to the resulting catalog image (e.g. make catalog-build CATALOG_IMG=example.com/operator-catalog:v0.2.0).
-CATALOG_IMG ?= $(IMAGE_TAG_BASE)-catalog:v$(VERSION)
+GPRC_CATALOG_IMG ?= $(IMAGE_TAG_BASE)-gprc-catalog:v$(VERSION)
 
-# Set CATALOG_BASE_IMG to an existing catalog image tag to add $BUNDLE_IMGS to that image.
-ifneq ($(origin CATALOG_BASE_IMG), undefined)
-FROM_INDEX_OPT := --from-index $(CATALOG_BASE_IMG)
+# Set GPRC_CATALOG_BASE_IMG to an existing catalog image tag to add $BUNDLE_IMGS to that image.
+ifneq ($(origin GPRC_CATALOG_BASE_IMG), undefined)
+FROM_INDEX_OPT := --from-index $(GPRC_CATALOG_BASE_IMG)
 endif
 
 # Build a catalog image by adding bundle images to an empty catalog using the operator package manager tool, 'opm'.
 # This recipe invokes 'opm' in 'semver' bundle add mode. For more information on add modes, see:
 # https://github.com/operator-framework/community-operators/blob/7f1438c/docs/packaging-operator.md#updating-your-existing-operator
-.PHONY: catalog-build
-catalog-build: opm ## Build a catalog image.
-	$(OPM) index add --container-tool $(CONTAINER_TOOL) --mode semver --tag $(CATALOG_IMG) --bundles $(BUNDLE_IMGS) $(FROM_INDEX_OPT)
+.PHONY: gprc-catalog-build
+gprc-catalog-build: opm ## Build a catalog image (legacy GPRC format)
+	$(OPM) index add --container-tool $(CONTAINER_TOOL) --mode semver --tag $(GPRC_CATALOG_IMG) --bundles $(BUNDLE_IMGS) $(FROM_INDEX_OPT)
 
 # Push the catalog image.
+.PHONY: gprc-catalog-push
+gprc-catalog-push: ## Push a catalog image (legacy GPRC format)
+	$(MAKE) docker-push IMG=$(GPRC_CATALOG_IMG)
+
+CATALOG_IMG ?= $(IMAGE_TAG_BASE)-catalog:v$(VERSION)
+CATALOG_DEFAULT_CHANNEL ?= alpha
+
+.PHONY: catalog/index.yaml
+catalog/index.yaml: README.md
+	@mkdir -p catalog
+	$(OPM) init ptp-operator -d README.md -c $(CATALOG_DEFAULT_CHANNEL) -o yaml >$@
+
+.PHONY: catalog/operator.yaml
+catalog/operator.yaml:
+	@mkdir -p catalog
+	$(OPM) render $(BUNDLE_IMGS) -o yaml >$@
+
+define CHANNEL_TEMPLATE
+---
+schema: olm.channel
+package: ptp-operator
+channel: alpha
+name: alpha
+entries:
+  - name: ptp-operator.v$(VERSION).0
+    replaces: ptp-operator.v4.20.0
+endef
+
+.PHONY: catalog/channel.yaml
+catalog/channel.yaml:
+	$(file > $@,$(CHANNEL_TEMPLATE))
+
+.PHONY: catalog.Dockerfile
+catalog.Dockerfile: catalog/index.yaml catalog/operator.yaml catalog/channel.yaml
+	@-rm -f $@
+	opm generate dockerfile catalog
+
+.PHONY: catalog-build
+catalog-build: catalog.Dockerfile catalog/index.yaml catalog/operator.yaml catalog/channel.yaml
+	$(OPM) validate catalog/
+	$(CONTAINER_TOOL) build -t ${CATALOG_IMG} -f catalog.Dockerfile .
+
 .PHONY: catalog-push
-catalog-push: ## Push a catalog image.
+catalog-push:
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
 
 .PHONY: common-deps-update
